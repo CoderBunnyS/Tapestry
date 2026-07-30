@@ -1,0 +1,234 @@
+.agenda-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.plan-count {
+  display: grid;
+  place-items: center;
+  min-width: 38px;
+  height: 29px;
+  padding: 0 9px;
+  color: var(--gold-deep);
+  background: rgba(200, 169, 107, 0.14);
+  border: 1px solid rgba(143, 109, 52, 0.2);
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.small-action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  color: #fff8e8;
+  background: linear-gradient(135deg, var(--emerald), #234b3d);
+  border: 1px solid rgba(143, 109, 52, 0.38);
+  border-radius: 12px;
+  box-shadow: 0 6px 15px rgba(21, 55, 42, 0.16);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.small-action-button:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(135deg, var(--emerald-bright), var(--emerald));
+  box-shadow: 0 9px 20px rgba(21, 55, 42, 0.22);
+}
+
+.small-action-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.plan-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 4px;
+  cursor: default;
+}
+
+.plan-row:hover {
+  padding-left: 4px;
+  color: var(--ink);
+  background: linear-gradient(90deg, rgba(47, 107, 85, 0.055), transparent 72%);
+}
+
+.plan-check-button,
+.plan-copy,
+.plan-row-actions button {
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.plan-check-button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.plan-check-button:hover {
+  background: rgba(47, 107, 85, 0.1);
+}
+
+.plan-copy {
+  min-width: 0;
+  padding: 2px 0;
+  text-align: left;
+}
+
+.plan-copy strong,
+.plan-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-copy:hover strong {
+  color: var(--emerald);
+}
+
+.plan-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  opacity: 0.48;
+  transition: opacity 160ms ease;
+}
+
+.plan-row:hover .plan-row-actions,
+.plan-row:focus-within .plan-row-actions {
+  opacity: 1;
+}
+
+.plan-row-actions button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: #7b7166;
+  border-radius: 10px;
+}
+
+.plan-row-actions button:hover {
+  color: var(--emerald);
+  background: rgba(47, 107, 85, 0.1);
+}
+
+.plan-row-actions .delete-plan-button:hover {
+  color: var(--garnet);
+  background: rgba(122, 51, 67, 0.1);
+}
+
+.plan-row-actions svg {
+  width: 16px;
+  height: 16px;
+}
+
+.plan-empty-state {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  padding: 22px 4px 8px;
+  color: #70675e;
+}
+
+.plan-empty-state button {
+  padding: 0;
+  color: var(--emerald);
+  background: none;
+  border: 0;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.plan-editor-form {
+  display: grid;
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.plan-editor-form label {
+  display: grid;
+  gap: 8px;
+}
+
+.plan-editor-form label > span {
+  color: var(--gold-light);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.plan-editor-form label small {
+  color: rgba(247, 242, 232, 0.55);
+  font-weight: 500;
+}
+
+.time-input-wrap {
+  position: relative;
+}
+
+.time-input-wrap svg {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 14px;
+  width: 19px;
+  color: var(--emerald);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.capture-sheet .time-input-wrap input {
+  padding-left: 44px;
+}
+
+.primary-button:disabled {
+  cursor: not-allowed;
+  filter: saturate(0.45);
+  opacity: 0.56;
+  transform: none;
+}
+
+@media (max-width: 520px) {
+  .section-heading {
+    align-items: flex-start;
+  }
+
+  .agenda-heading-actions {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 7px;
+  }
+
+  .small-action-button {
+    min-height: 32px;
+    padding: 0 9px;
+  }
+
+  .plan-row {
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .plan-row-actions {
+    gap: 0;
+  }
+
+  .plan-row-actions button {
+    width: 30px;
+    height: 30px;
+  }
+}
