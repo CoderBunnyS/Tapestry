@@ -1,500 +1,105 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  CalendarDays,
-  Check,
-  Circle,
-  Clock3,
-  HeartHandshake,
-  Home,
-  NotebookPen,
-  Pencil,
-  Plus,
-  Sparkles,
-  Trash2,
-} from "lucide-react";
-import type { DailyEntry, DailyPlan, EntryKind } from "@tapestry/shared";
-import "./agenda.css";
-import "./timeline.css";
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Circle, Clock3, HeartHandshake, Home, Monitor, Moon, NotebookPen, Pencil, Plus, RefreshCw, Settings2, Sparkles, Sun, Trash2, X } from "lucide-react";
+import type { DailyEntry, DailyPlan, DailyRecord, EntryKind, PlanOutcome, ThemePreference } from "@tapestry/shared";
 
-const initialPlans: DailyPlan[] = [
-  { id: "plan-1", title: "Morning walk", scheduledAt: "8:00 AM", outcome: "completed" },
-  { id: "plan-2", title: "Prepare demo notes", scheduledAt: "10:30 AM", outcome: "pending" },
-  { id: "plan-3", title: "Spanish practice", scheduledAt: "4:00 PM", outcome: "pending" },
-];
+const entryLabels: Record<EntryKind, string> = { task: "Task", meal: "Meal", health: "Health", expense: "Expense", interaction: "Person", note: "Note" };
+const outcomeLabels: Record<PlanOutcome, string> = { pending: "Planned", completed: "Completed", changed: "Changed", skipped: "Skipped" };
+const THEME_STORAGE_KEY = "tapestry:theme";
 
-const initialEntries: DailyEntry[] = [
-  {
-    id: "entry-1",
-    kind: "interaction",
-    title: "Coffee with Maya",
-    detail: "Her studio opening is next month—ask about the signage.",
-    occurredAt: "9:15 AM",
-    links: [{ entityId: "maya", entityType: "person", label: "Maya" }],
-  },
-  {
-    id: "entry-2",
-    kind: "meal",
-    title: "Yogurt, berries, and granola",
-    occurredAt: "9:50 AM",
-    links: [],
-  },
-];
+type PlanDraft = { id?: string; title: string; scheduledAt: string; estimatedMinutes: string; actualMinutes: string; outcome: PlanOutcome };
+type EntryDraft = { id?: string; kind: EntryKind; title: string; detail: string; occurredAt: string; durationMinutes: string; planId: string };
 
-const entryLabels: Record<EntryKind, string> = {
-  task: "Task",
-  meal: "Meal",
-  health: "Health",
-  expense: "Expense",
-  interaction: "Person",
-  note: "Note",
-};
+const emptyPlanDraft: PlanDraft = { title: "", scheduledAt: "", estimatedMinutes: "", actualMinutes: "", outcome: "pending" };
+const emptyEntryDraft: EntryDraft = { kind: "note", title: "", detail: "", occurredAt: "", durationMinutes: "", planId: "" };
 
-const PLAN_STORAGE_KEY = "tapestry:today-plans";
-const ENTRY_STORAGE_KEY = "tapestry:today-entries";
-const NOTES_STORAGE_KEY = "tapestry:today-notes";
-const DEFAULT_NOTES = "A steady day. Leave some room between meetings.";
+const pad = (value: number) => String(value).padStart(2, "0");
+const toDateKey = (date: Date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+const fromDateKey = (value: string) => { const [year, month, day] = value.split("-").map(Number); return new Date(year, month - 1, day, 12); };
+const moveDate = (value: string, offset: number) => { const date = fromDateKey(value); date.setDate(date.getDate() + offset); return toDateKey(date); };
+const blankDailyRecord = (date: string): DailyRecord => ({ id: `daily-${date}`, date, notes: "", plans: [], entries: [] });
+const cacheKey = (date: string) => `tapestry:daily:${date}`;
+const loadCachedRecord = (date: string) => { try { const saved = localStorage.getItem(cacheKey(date)); return saved ? JSON.parse(saved) as DailyRecord : undefined; } catch { return undefined; } };
+const currentTimeKey = () => `${pad(new Date().getHours())}:${pad(new Date().getMinutes())}`;
+const parseMinutes = (value: string) => { if (!value.trim()) return undefined; const number = Number(value); return Number.isFinite(number) && number >= 0 ? Math.round(number) : undefined; };
+const formatDuration = (value?: number) => { if (value === undefined) return ""; const hours = Math.floor(value / 60), minutes = value % 60; if (!hours) return `${minutes}m`; if (!minutes) return `${hours}h`; return `${hours}h ${minutes}m`; };
+function parseClock(value?: string) { if (!value) return undefined; const match = value.trim().match(/^(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i); if (!match) return undefined; let hours = Number(match[1]); const minutes = Number(match[2]); if (minutes > 59) return undefined; const meridiem = match[3]?.toUpperCase(); if (meridiem) { if (hours < 1 || hours > 12) return undefined; if (hours === 12) hours = 0; if (meridiem === "PM") hours += 12; } else if (hours > 23) return undefined; return hours * 60 + minutes; }
+function formatClock(value?: string) { const total = parseClock(value); if (total === undefined) return value || "Anytime"; const hours24 = Math.floor(total / 60), minutes = total % 60, meridiem = hours24 >= 12 ? "PM" : "AM", hours12 = hours24 % 12 || 12; return `${hours12}:${pad(minutes)} ${meridiem}`; }
 
-type PlanDraft = {
-  id?: string;
-  title: string;
-  scheduledAt: string;
-};
-
-type EntryDraft = {
-  id?: string;
-  kind: EntryKind;
-  title: string;
-  detail: string;
-  occurredAt: string;
-};
-
-const emptyPlanDraft: PlanDraft = {
-  title: "",
-  scheduledAt: "",
-};
-
-const emptyEntryDraft: EntryDraft = {
-  kind: "note",
-  title: "",
-  detail: "",
-  occurredAt: "",
-};
-
-function loadArray<T>(key: string, fallback: T[]): T[] {
-  try {
-    const saved = localStorage.getItem(key);
-    if (!saved) return fallback;
-    const parsed: unknown = JSON.parse(saved);
-    return Array.isArray(parsed) ? (parsed as T[]) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function loadNotes() {
-  return localStorage.getItem(NOTES_STORAGE_KEY) ?? DEFAULT_NOTES;
-}
-
-function currentTime() {
-  return new Intl.DateTimeFormat("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date());
+function ScoreControl({ label, value, onChange }: { label: string; value?: number; onChange: (value?: number) => void }) {
+  return <div className="score-control"><div className="score-heading"><strong>{label}</strong><span>{value ? `${value}/10` : "Not set"}</span></div><div className="score-buttons">{Array.from({ length: 10 }, (_, index) => index + 1).map((score) => <button key={score} className={value === score ? "selected" : ""} onClick={() => onChange(value === score ? undefined : score)}>{score}</button>)}</div></div>;
 }
 
 export function App() {
-  const [plans, setPlans] = useState<DailyPlan[]>(() => loadArray(PLAN_STORAGE_KEY, initialPlans));
-  const [entries, setEntries] = useState<DailyEntry[]>(() => loadArray(ENTRY_STORAGE_KEY, initialEntries));
-  const [notes, setNotes] = useState(loadNotes);
+  const today = useMemo(() => toDateKey(new Date()), []);
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [record, setRecord] = useState<DailyRecord>(() => blankDailyRecord(today));
+  const [recordReady, setRecordReady] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"loading" | "saving" | "saved" | "local">("loading");
   const [planEditorOpen, setPlanEditorOpen] = useState(false);
   const [planDraft, setPlanDraft] = useState<PlanDraft>(emptyPlanDraft);
   const [entryEditorOpen, setEntryEditorOpen] = useState(false);
   const [entryDraft, setEntryDraft] = useState<EntryDraft>(emptyEntryDraft);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [theme, setTheme] = useState<ThemePreference>(() => { const saved = localStorage.getItem(THEME_STORAGE_KEY); return saved === "light" || saved === "dark" || saved === "system" ? saved : "dark"; });
+
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem(THEME_STORAGE_KEY, theme); const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]'); if (meta) meta.content = theme === "light" ? "#eee5d6" : "#111613"; }, [theme]);
 
   useEffect(() => {
-    localStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify(plans));
-  }, [plans]);
+    const controller = new AbortController(); setRecordReady(false); setSaveStatus("loading"); setRecord(blankDailyRecord(selectedDate));
+    void (async () => { try { const response = await fetch(`/api/daily-records/${selectedDate}`, { signal: controller.signal }); if (!response.ok) throw new Error(); const loaded = await response.json() as DailyRecord; setRecord(loaded); localStorage.setItem(cacheKey(selectedDate), JSON.stringify(loaded)); setSaveStatus("saved"); } catch { if (!controller.signal.aborted) { setRecord(loadCachedRecord(selectedDate) ?? blankDailyRecord(selectedDate)); setSaveStatus("local"); } } finally { if (!controller.signal.aborted) setRecordReady(true); } })();
+    return () => controller.abort();
+  }, [selectedDate]);
 
   useEffect(() => {
-    localStorage.setItem(ENTRY_STORAGE_KEY, JSON.stringify(entries));
-  }, [entries]);
+    if (!recordReady || record.date !== selectedDate) return;
+    localStorage.setItem(cacheKey(selectedDate), JSON.stringify(record));
+    const timer = window.setTimeout(async () => { setSaveStatus("saving"); try { const response = await fetch(`/api/daily-records/${selectedDate}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(record) }); if (!response.ok) throw new Error(); setSaveStatus("saved"); } catch { setSaveStatus("local"); } }, 500);
+    return () => window.clearTimeout(timer);
+  }, [record, recordReady, selectedDate]);
 
-  useEffect(() => {
-    localStorage.setItem(NOTES_STORAGE_KEY, notes);
-  }, [notes]);
+  const dateLabel = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric", year: fromDateKey(selectedDate).getFullYear() === new Date().getFullYear() ? undefined : "numeric" }).format(fromDateKey(selectedDate));
+  const relativeLabel = selectedDate === today ? "Today" : selectedDate === moveDate(today, -1) ? "Yesterday" : selectedDate === moveDate(today, 1) ? "Tomorrow" : "Daily record";
+  const planDisplay = useMemo(() => { const ordered = [...record.plans].sort((a,b) => (parseClock(a.scheduledAt) ?? 9999) - (parseClock(b.scheduledAt) ?? 9999)); let previousEnd: number | undefined; return ordered.map(plan => { const start = parseClock(plan.scheduledAt); const gap = start !== undefined && previousEnd !== undefined && start > previousEnd ? start - previousEnd : undefined; previousEnd = start !== undefined && plan.estimatedMinutes !== undefined ? Math.max(previousEnd ?? start, start + plan.estimatedMinutes) : undefined; return { plan, gap }; }); }, [record.plans]);
+  const entries = useMemo(() => [...record.entries].sort((a,b) => (parseClock(a.occurredAt) ?? 9999) - (parseClock(b.occurredAt) ?? 9999)), [record.entries]);
+  const metrics = useMemo(() => ({ completed: record.plans.filter(plan => plan.outcome === "completed").length, planned: record.plans.reduce((sum, plan) => sum + (plan.estimatedMinutes ?? 0), 0), actual: record.plans.reduce((sum, plan) => sum + (plan.actualMinutes ?? 0), 0) + record.entries.filter(entry => !entry.planId).reduce((sum, entry) => sum + (entry.durationMinutes ?? 0), 0) }), [record]);
 
-  const dateLabel = useMemo(
-    () =>
-      new Intl.DateTimeFormat("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }).format(new Date()),
-    [],
-  );
-
-  const completedPlanCount = plans.filter((plan) => plan.outcome === "completed").length;
-
-  function togglePlan(id: string) {
-    setPlans((current) =>
-      current.map((plan) =>
-        plan.id === id
-          ? { ...plan, outcome: plan.outcome === "completed" ? "pending" : "completed" }
-          : plan,
-      ),
-    );
-  }
-
-  function openNewPlan() {
-    setPlanDraft(emptyPlanDraft);
-    setPlanEditorOpen(true);
-  }
-
-  function openPlanEditor(plan: DailyPlan) {
-    setPlanDraft({
-      id: plan.id,
-      title: plan.title,
-      scheduledAt: plan.scheduledAt ?? "",
-    });
-    setPlanEditorOpen(true);
-  }
-
+  const updateRecord = (patch: Partial<DailyRecord>) => setRecord(current => ({ ...current, ...patch }));
+  const togglePlan = (id: string) => setRecord(current => ({ ...current, plans: current.plans.map(plan => plan.id === id ? { ...plan, outcome: plan.outcome === "completed" ? "pending" : "completed" } : plan) }));
+  const openNewPlan = () => { setPlanDraft(emptyPlanDraft); setPlanEditorOpen(true); };
+  const openPlanEditor = (plan: DailyPlan) => { setPlanDraft({ id: plan.id, title: plan.title, scheduledAt: plan.scheduledAt ?? "", estimatedMinutes: plan.estimatedMinutes?.toString() ?? "", actualMinutes: plan.actualMinutes?.toString() ?? "", outcome: plan.outcome }); setPlanEditorOpen(true); };
   function savePlan() {
-    const title = planDraft.title.trim();
-    if (!title) return;
-
-    if (planDraft.id) {
-      setPlans((current) =>
-        current.map((plan) =>
-          plan.id === planDraft.id
-            ? { ...plan, title, scheduledAt: planDraft.scheduledAt.trim() || undefined }
-            : plan,
-        ),
-      );
-    } else {
-      setPlans((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          title,
-          scheduledAt: planDraft.scheduledAt.trim() || undefined,
-          outcome: "pending",
-        },
-      ]);
-    }
-
-    setPlanEditorOpen(false);
-    setPlanDraft(emptyPlanDraft);
+    const title = planDraft.title.trim(); if (!title) return;
+    setRecord(current => {
+      if (planDraft.id) return { ...current, plans: current.plans.map(plan => plan.id === planDraft.id ? { ...plan, title, scheduledAt: planDraft.scheduledAt || undefined, estimatedMinutes: parseMinutes(planDraft.estimatedMinutes), actualMinutes: parseMinutes(planDraft.actualMinutes), outcome: planDraft.outcome, original: plan.original ?? ((plan.title !== title || (plan.scheduledAt ?? "") !== planDraft.scheduledAt || plan.estimatedMinutes !== parseMinutes(planDraft.estimatedMinutes)) ? { title: plan.title, scheduledAt: plan.scheduledAt, estimatedMinutes: plan.estimatedMinutes } : undefined) } : plan) };
+      return { ...current, plans: [...current.plans, { id: crypto.randomUUID(), title, scheduledAt: planDraft.scheduledAt || undefined, estimatedMinutes: parseMinutes(planDraft.estimatedMinutes), actualMinutes: parseMinutes(planDraft.actualMinutes), outcome: planDraft.outcome }] };
+    }); setPlanEditorOpen(false);
   }
-
-  function deletePlan(id: string) {
-    setPlans((current) => current.filter((plan) => plan.id !== id));
-  }
-
-  function openNewEntry(kind: EntryKind = "note") {
-    setEntryDraft({ ...emptyEntryDraft, kind, occurredAt: currentTime() });
-    setEntryEditorOpen(true);
-  }
-
-  function openEntryEditor(entry: DailyEntry) {
-    setEntryDraft({
-      id: entry.id,
-      kind: entry.kind,
-      title: entry.title,
-      detail: entry.detail ?? "",
-      occurredAt: entry.occurredAt ?? "",
-    });
-    setEntryEditorOpen(true);
-  }
-
+  const deletePlan = (id: string) => setRecord(current => ({ ...current, plans: current.plans.filter(plan => plan.id !== id), entries: current.entries.map(entry => entry.planId === id ? { ...entry, planId: undefined } : entry) }));
+  const openNewEntry = (kind: EntryKind = "note") => { setEntryDraft({ ...emptyEntryDraft, kind, occurredAt: currentTimeKey() }); setEntryEditorOpen(true); };
+  const openActualForPlan = (plan: DailyPlan) => { setEntryDraft({ ...emptyEntryDraft, kind: "task", title: plan.title, occurredAt: currentTimeKey(), durationMinutes: plan.actualMinutes?.toString() ?? "", planId: plan.id }); setEntryEditorOpen(true); };
+  const openEntryEditor = (entry: DailyEntry) => { setEntryDraft({ id: entry.id, kind: entry.kind, title: entry.title, detail: entry.detail ?? "", occurredAt: entry.occurredAt ?? "", durationMinutes: entry.durationMinutes?.toString() ?? "", planId: entry.planId ?? "" }); setEntryEditorOpen(true); };
   function saveEntry() {
-    const title = entryDraft.title.trim();
-    if (!title) return;
-
-    if (entryDraft.id) {
-      setEntries((current) =>
-        current.map((entry) =>
-          entry.id === entryDraft.id
-            ? {
-                ...entry,
-                kind: entryDraft.kind,
-                title,
-                detail: entryDraft.detail.trim() || undefined,
-                occurredAt: entryDraft.occurredAt.trim() || undefined,
-              }
-            : entry,
-        ),
-      );
-    } else {
-      setEntries((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          kind: entryDraft.kind,
-          title,
-          detail: entryDraft.detail.trim() || undefined,
-          occurredAt: entryDraft.occurredAt.trim() || currentTime(),
-          links: [],
-        },
-      ]);
-    }
-
-    setEntryEditorOpen(false);
-    setEntryDraft(emptyEntryDraft);
+    const title = entryDraft.title.trim(); if (!title) return;
+    setRecord(current => { const id = entryDraft.id ?? crypto.randomUUID(); const old = current.entries.find(entry => entry.id === id); const duration = parseMinutes(entryDraft.durationMinutes); const next: DailyEntry = { id, kind: entryDraft.kind, title, detail: entryDraft.detail.trim() || undefined, occurredAt: entryDraft.occurredAt || currentTimeKey(), durationMinutes: duration, planId: entryDraft.planId || undefined, links: old?.links ?? [] }; const nextEntries = old ? current.entries.map(entry => entry.id === id ? next : entry) : [...current.entries, next]; const nextPlans = current.plans.map(plan => entryDraft.planId === plan.id ? { ...plan, actualEntryId: id, actualMinutes: duration, outcome: "completed" as PlanOutcome } : plan); return { ...current, entries: nextEntries, plans: nextPlans }; }); setEntryEditorOpen(false);
   }
+  const deleteEntry = (id: string) => setRecord(current => ({ ...current, entries: current.entries.filter(entry => entry.id !== id), plans: current.plans.map(plan => plan.actualEntryId === id ? { ...plan, actualEntryId: undefined, actualMinutes: undefined } : plan) }));
 
-  function deleteEntry(id: string) {
-    setEntries((current) => current.filter((entry) => entry.id !== id));
-  }
-
-  return (
-    <div className="app-shell">
-      <aside className="desktop-rail" aria-label="Primary navigation">
-        <div className="brand-mark">T</div>
-        <button className="rail-button active" aria-label="Today"><Home /></button>
-        <button className="rail-button" aria-label="Calendar"><CalendarDays /></button>
-        <button className="rail-button" aria-label="Journal"><NotebookPen /></button>
-      </aside>
-
-      <main className="today-page">
-        <header className="page-header">
-          <div>
-            <p className="eyebrow">Today</p>
-            <h1>{dateLabel}</h1>
-          </div>
-          <button className="avatar" aria-label="Profile">B</button>
-        </header>
-
-        <section className="welcome-card">
-          <Sparkles aria-hidden="true" />
-          <div>
-            <strong>Good morning, Bunny.</strong>
-            <p>Here’s the shape of your day. You can change it anytime.</p>
-          </div>
-        </section>
-
-        <section className="content-card">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">My plan</p>
-              <h2>Agenda</h2>
-            </div>
-            <div className="agenda-heading-actions">
-              <span className="plan-count">{completedPlanCount}/{plans.length}</span>
-              <button className="small-action-button" onClick={openNewPlan}>
-                <Plus /> Add plan
-              </button>
-            </div>
-          </div>
-
-          {plans.length > 0 ? (
-            <div className="plan-list">
-              {plans.map((plan) => (
-                <div className={`plan-row ${plan.outcome}`} key={plan.id}>
-                  <button
-                    className="plan-check-button"
-                    onClick={() => togglePlan(plan.id)}
-                    aria-label={plan.outcome === "completed" ? `Mark ${plan.title} incomplete` : `Complete ${plan.title}`}
-                  >
-                    <span className="check">{plan.outcome === "completed" ? <Check /> : <Circle />}</span>
-                  </button>
-
-                  <button className="plan-copy" onClick={() => openPlanEditor(plan)}>
-                    <strong>{plan.title}</strong>
-                    <small>{plan.scheduledAt ?? "Anytime"}</small>
-                  </button>
-
-                  <div className="plan-row-actions">
-                    <button onClick={() => openPlanEditor(plan)} aria-label={`Edit ${plan.title}`}><Pencil /></button>
-                    <button className="delete-plan-button" onClick={() => deletePlan(plan.id)} aria-label={`Delete ${plan.title}`}><Trash2 /></button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="plan-empty-state">
-              <p>Nothing is planned yet. The day has room to breathe.</p>
-              <button onClick={openNewPlan}>Add the first plan</button>
-            </div>
-          )}
-        </section>
-
-        <section className="content-card notes-card">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Editable</p>
-              <h2>Notes for today</h2>
-            </div>
-          </div>
-          <textarea value={notes} onChange={(event) => setNotes(event.target.value)} aria-label="Notes for today" />
-        </section>
-
-        <section className="timeline-section">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Actual</p>
-              <h2>What happened</h2>
-            </div>
-            <div className="timeline-heading-actions">
-              <button className="small-action-button" onClick={() => openNewEntry()}>
-                <Plus /> <span>Add entry</span>
-              </button>
-            </div>
-          </div>
-
-          {entries.length > 0 ? (
-            <div className="timeline">
-              {entries.map((entry) => (
-                <article className="timeline-entry" key={entry.id}>
-                  <div className={`entry-dot ${entry.kind}`} />
-                  <div className="entry-card">
-                    <div className="entry-card-header">
-                      <div className="entry-meta">
-                        <span>{entryLabels[entry.kind]}</span>
-                        <time>{entry.occurredAt}</time>
-                      </div>
-                      <div className="entry-card-actions">
-                        <button onClick={() => openEntryEditor(entry)} aria-label={`Edit ${entry.title}`}><Pencil /></button>
-                        <button className="delete-entry-button" onClick={() => deleteEntry(entry.id)} aria-label={`Delete ${entry.title}`}><Trash2 /></button>
-                      </div>
-                    </div>
-                    <h3>{entry.title}</h3>
-                    {entry.detail && <p>{entry.detail}</p>}
-                    {entry.links.map((link) => <span className="link-chip" key={link.entityId}>{link.label}</span>)}
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="timeline-empty-state">
-              <p>Nothing has been captured yet.</p>
-              <button onClick={() => openNewEntry()}>Record the first thing</button>
-            </div>
-          )}
-        </section>
-      </main>
-
-      <button className="quick-add" onClick={() => openNewEntry()}>
-        <Plus /> <span>Capture</span>
-      </button>
-
-      <nav className="mobile-nav" aria-label="Primary navigation">
-        <button className="active"><Home /><span>Today</span></button>
-        <button><CalendarDays /><span>Plan</span></button>
-        <button><HeartHandshake /><span>Care</span></button>
-        <button><NotebookPen /><span>Journal</span></button>
-      </nav>
-
-      {planEditorOpen && (
-        <div className="sheet-backdrop" onMouseDown={() => setPlanEditorOpen(false)}>
-          <section className="capture-sheet" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="sheet-handle" />
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">{planDraft.id ? "Edit plan" : "Add to agenda"}</p>
-                <h2>{planDraft.id ? "Adjust this plan" : "What needs a place today?"}</h2>
-              </div>
-              <button className="text-button" onClick={() => setPlanEditorOpen(false)}>Close</button>
-            </div>
-
-            <div className="plan-editor-form">
-              <label>
-                <span>Plan</span>
-                <input
-                  autoFocus
-                  value={planDraft.title}
-                  onChange={(event) => setPlanDraft((current) => ({ ...current, title: event.target.value }))}
-                  onKeyDown={(event) => event.key === "Enter" && savePlan()}
-                  placeholder="What do you want to do?"
-                />
-              </label>
-
-              <label>
-                <span>Time <small>optional</small></span>
-                <div className="time-input-wrap">
-                  <Clock3 />
-                  <input
-                    value={planDraft.scheduledAt}
-                    onChange={(event) => setPlanDraft((current) => ({ ...current, scheduledAt: event.target.value }))}
-                    onKeyDown={(event) => event.key === "Enter" && savePlan()}
-                    placeholder="Anytime, 4:00 PM, after work…"
-                  />
-                </div>
-              </label>
-            </div>
-
-            <button className="primary-button" onClick={savePlan} disabled={!planDraft.title.trim()}>
-              {planDraft.id ? "Save changes" : "Add to agenda"}
-            </button>
-          </section>
-        </div>
-      )}
-
-      {entryEditorOpen && (
-        <div className="sheet-backdrop" onMouseDown={() => setEntryEditorOpen(false)}>
-          <section className="capture-sheet" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="sheet-handle" />
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">{entryDraft.id ? "Edit entry" : "Quick capture"}</p>
-                <h2>{entryDraft.id ? "Adjust what happened" : "What happened?"}</h2>
-              </div>
-              <button className="text-button" onClick={() => setEntryEditorOpen(false)}>Close</button>
-            </div>
-
-            <div className="kind-grid">
-              {(Object.keys(entryLabels) as EntryKind[]).map((kind) => (
-                <button
-                  className={entryDraft.kind === kind ? "selected" : ""}
-                  key={kind}
-                  onClick={() => setEntryDraft((current) => ({ ...current, kind }))}
-                >
-                  {entryLabels[kind]}
-                </button>
-              ))}
-            </div>
-
-            <div className="entry-editor-form">
-              <label>
-                <span>Title</span>
-                <input
-                  autoFocus
-                  value={entryDraft.title}
-                  onChange={(event) => setEntryDraft((current) => ({ ...current, title: event.target.value }))}
-                  onKeyDown={(event) => event.key === "Enter" && saveEntry()}
-                  placeholder={`Add a ${entryLabels[entryDraft.kind].toLowerCase()}…`}
-                />
-              </label>
-
-              <label>
-                <span>Details <small>optional</small></span>
-                <textarea
-                  value={entryDraft.detail}
-                  onChange={(event) => setEntryDraft((current) => ({ ...current, detail: event.target.value }))}
-                  placeholder="Anything worth remembering?"
-                />
-              </label>
-
-              <label>
-                <span>Time <small>optional</small></span>
-                <div className="entry-time-wrap">
-                  <Clock3 />
-                  <input
-                    value={entryDraft.occurredAt}
-                    onChange={(event) => setEntryDraft((current) => ({ ...current, occurredAt: event.target.value }))}
-                    onKeyDown={(event) => event.key === "Enter" && saveEntry()}
-                    placeholder="Now, 9:30 AM, after lunch…"
-                  />
-                </div>
-              </label>
-            </div>
-
-            <button className="primary-button" onClick={saveEntry} disabled={!entryDraft.title.trim()}>
-              {entryDraft.id ? "Save changes" : "Add to today"}
-            </button>
-          </section>
-        </div>
-      )}
-    </div>
-  );
+  return <div className="app-shell">
+    <aside className="desktop-rail"><div className="brand-mark">T</div><button className="rail-button active"><Home /></button><button className="rail-button"><CalendarDays /></button><button className="rail-button"><NotebookPen /></button></aside>
+    <main className="today-page">
+      <header className="page-header"><div><p className="eyebrow">{relativeLabel}</p><h1>{dateLabel}</h1></div><div className="page-header-actions"><span className={`save-status ${saveStatus}`}>{saveStatus === "loading" ? "Loading…" : saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved" : "Local only"}</span><button className="icon-button" onClick={() => setSettingsOpen(true)}><Settings2 /></button></div></header>
+      <div className="date-navigator"><button className="icon-button" onClick={() => setSelectedDate(moveDate(selectedDate, -1))}><ChevronLeft /></button><input type="date" value={selectedDate} onChange={event => setSelectedDate(event.target.value)} />{selectedDate !== today && <button className="today-button" onClick={() => setSelectedDate(today)}>Today</button>}<button className="icon-button" onClick={() => setSelectedDate(moveDate(selectedDate, 1))}><ChevronRight /></button></div>
+      <section className="welcome-card"><Sparkles /><div><strong>Here’s the shape of your day.</strong><p>Plans stay distinct from what actually happened, so Tapestry remembers both.</p></div></section>
+      <section className="overview-grid"><div className="overview-stat"><span>Plans</span><strong>{record.plans.length}</strong><small>{metrics.completed} completed</small></div><div className="overview-stat"><span>Planned</span><strong>{formatDuration(metrics.planned) || "—"}</strong><small>estimated time</small></div><div className="overview-stat"><span>Tracked</span><strong>{formatDuration(metrics.actual) || "—"}</strong><small>actual time</small></div><div className="overview-stat"><span>Recorded</span><strong>{record.entries.length}</strong><small>things happened</small></div></section>
+      <section className="content-card"><div className="section-heading"><div><p className="eyebrow">My plan</p><h2>Agenda</h2></div><button className="small-action-button" onClick={openNewPlan}><Plus /> Add plan</button></div>{planDisplay.length ? <div className="plan-list">{planDisplay.map(({plan,gap}) => <div className="plan-block" key={plan.id}>{gap !== undefined && <div className="agenda-gap"><span>Open</span><strong>{formatDuration(gap)}</strong></div>}<div className={`plan-row ${plan.outcome}`}><button className="plan-check-button" onClick={() => togglePlan(plan.id)}>{plan.outcome === "completed" ? <Check /> : plan.outcome === "skipped" ? <X /> : plan.outcome === "changed" ? <RefreshCw /> : <Circle />}</button><button className="plan-copy" onClick={() => openPlanEditor(plan)}><strong>{plan.title}</strong><span className="plan-meta"><small>{formatClock(plan.scheduledAt)}</small>{plan.estimatedMinutes !== undefined && <small>{formatDuration(plan.estimatedMinutes)} est.</small>}{plan.actualMinutes !== undefined && <small className="actual-time">{formatDuration(plan.actualMinutes)} actual</small>}</span><span className={`status-pill ${plan.outcome}`}>{outcomeLabels[plan.outcome]}</span>{plan.original && <small className="plan-history">Originally: {plan.original.title}{plan.original.scheduledAt ? ` · ${formatClock(plan.original.scheduledAt)}` : ""}{plan.original.estimatedMinutes !== undefined ? ` · ${formatDuration(plan.original.estimatedMinutes)}` : ""}</small>}</button><div className="plan-row-actions"><button className="log-actual-button" onClick={() => openActualForPlan(plan)}><Clock3 /> Actual</button><button onClick={() => openPlanEditor(plan)}><Pencil /></button><button className="danger-button" onClick={() => deletePlan(plan.id)}><Trash2 /></button></div></div></div>)}</div> : <div className="empty-state"><p>Nothing is planned yet. The day has room to breathe.</p><button onClick={openNewPlan}>Add the first plan</button></div>}</section>
+      <section className="content-card notes-card"><div className="section-heading"><div><p className="eyebrow">Keep in mind</p><h2>Notes for the day</h2></div></div><textarea value={record.notes} onChange={event => updateRecord({ notes: event.target.value })} placeholder="Anything you want in view while the day unfolds…" /></section>
+      <section className="timeline-section"><div className="section-heading"><div><p className="eyebrow">Actual</p><h2>What happened</h2></div><button className="small-action-button" onClick={() => openNewEntry()}><Plus /> Add entry</button></div>{entries.length ? <div className="timeline">{entries.map(entry => <article className="timeline-entry" key={entry.id}><div className={`entry-dot ${entry.kind}`} /><div className="entry-card"><div className="entry-card-header"><div className="entry-meta"><span>{entryLabels[entry.kind]}</span><time>{formatClock(entry.occurredAt)}</time>{entry.durationMinutes !== undefined && <span>{formatDuration(entry.durationMinutes)}</span>}</div><div className="entry-card-actions"><button onClick={() => openEntryEditor(entry)}><Pencil /></button><button className="danger-button" onClick={() => deleteEntry(entry.id)}><Trash2 /></button></div></div><h3>{entry.title}</h3>{entry.detail && <p>{entry.detail}</p>}{entry.planId && <span className="link-chip">Plan: {record.plans.find(plan => plan.id === entry.planId)?.title}</span>}</div></article>)}</div> : <div className="empty-state timeline-empty"><p>Nothing has been captured yet.</p><button onClick={() => openNewEntry()}>Record the first thing</button></div>}</section>
+      <section className="content-card reflection-card"><div className="section-heading"><div><p className="eyebrow">Close the loop</p><h2>Reflection</h2></div></div><div className="wellbeing-grid"><ScoreControl label="Mood" value={record.mood} onChange={mood => updateRecord({ mood })} /><ScoreControl label="Energy" value={record.energy} onChange={energy => updateRecord({ energy })} /></div><label className="reflection-field"><span>How did the day actually go?</span><textarea value={record.reflection ?? ""} onChange={event => updateRecord({ reflection: event.target.value })} placeholder="What worked, what shifted, what do you want Future You to know?" /></label></section>
+    </main>
+    <button className="quick-add" onClick={() => openNewEntry()}><Plus /><span>Capture</span></button>
+    <nav className="mobile-nav"><button className="active"><Home /><span>Today</span></button><button><CalendarDays /><span>Plan</span></button><button><HeartHandshake /><span>Care</span></button><button><NotebookPen /><span>Journal</span></button></nav>
+    {planEditorOpen && <div className="sheet-backdrop" onMouseDown={() => setPlanEditorOpen(false)}><section className="capture-sheet" onMouseDown={event => event.stopPropagation()}><div className="sheet-handle" /><div className="section-heading"><div><p className="eyebrow">{planDraft.id ? "Edit plan" : "Add to agenda"}</p><h2>{planDraft.id ? "Adjust this plan" : "Give this some room"}</h2></div><button className="text-button" onClick={() => setPlanEditorOpen(false)}>Close</button></div><div className="editor-form"><label><span>Plan</span><input autoFocus value={planDraft.title} onChange={event => setPlanDraft(current => ({ ...current, title: event.target.value }))} /></label><div className="form-grid two-column"><label><span>Start time</span><input type="time" value={planDraft.scheduledAt} onChange={event => setPlanDraft(current => ({ ...current, scheduledAt: event.target.value }))} /></label><label><span>Estimated minutes</span><input type="number" min="0" step="5" value={planDraft.estimatedMinutes} onChange={event => setPlanDraft(current => ({ ...current, estimatedMinutes: event.target.value }))} /></label></div><div className="form-grid two-column"><label><span>Status</span><select value={planDraft.outcome} onChange={event => setPlanDraft(current => ({ ...current, outcome: event.target.value as PlanOutcome }))}>{(Object.keys(outcomeLabels) as PlanOutcome[]).map(outcome => <option key={outcome} value={outcome}>{outcomeLabels[outcome]}</option>)}</select></label><label><span>Actual minutes</span><input type="number" min="0" step="5" value={planDraft.actualMinutes} onChange={event => setPlanDraft(current => ({ ...current, actualMinutes: event.target.value }))} /></label></div><p className="editor-hint">Start time + estimate lets Tapestry show open gaps. If you change a plan, its original version is kept.</p></div><button className="primary-button" onClick={savePlan}>Save</button></section></div>}
+    {entryEditorOpen && <div className="sheet-backdrop" onMouseDown={() => setEntryEditorOpen(false)}><section className="capture-sheet" onMouseDown={event => event.stopPropagation()}><div className="sheet-handle" /><div className="section-heading"><div><p className="eyebrow">Actual</p><h2>What happened?</h2></div><button className="text-button" onClick={() => setEntryEditorOpen(false)}>Close</button></div><div className="kind-grid">{(Object.keys(entryLabels) as EntryKind[]).map(kind => <button className={entryDraft.kind === kind ? "selected" : ""} key={kind} onClick={() => setEntryDraft(current => ({ ...current, kind }))}>{entryLabels[kind]}</button>)}</div><div className="editor-form"><label><span>Title</span><input autoFocus value={entryDraft.title} onChange={event => setEntryDraft(current => ({ ...current, title: event.target.value }))} /></label><label><span>Details</span><textarea value={entryDraft.detail} onChange={event => setEntryDraft(current => ({ ...current, detail: event.target.value }))} /></label><div className="form-grid two-column"><label><span>Actual time</span><input type="time" value={entryDraft.occurredAt} onChange={event => setEntryDraft(current => ({ ...current, occurredAt: event.target.value }))} /></label><label><span>Duration minutes</span><input type="number" min="0" step="5" value={entryDraft.durationMinutes} onChange={event => setEntryDraft(current => ({ ...current, durationMinutes: event.target.value }))} /></label></div><label><span>Related plan</span><select value={entryDraft.planId} onChange={event => setEntryDraft(current => ({ ...current, planId: event.target.value }))}><option value="">No related plan</option>{record.plans.map(plan => <option key={plan.id} value={plan.id}>{plan.title}</option>)}</select></label></div><button className="primary-button" onClick={saveEntry}>Save</button></section></div>}
+    {settingsOpen && <div className="sheet-backdrop" onMouseDown={() => setSettingsOpen(false)}><section className="capture-sheet" onMouseDown={event => event.stopPropagation()}><div className="sheet-handle" /><div className="section-heading"><div><p className="eyebrow">Tapestry</p><h2>Appearance</h2></div><button className="text-button" onClick={() => setSettingsOpen(false)}>Close</button></div><p className="settings-copy">Choose it here, not in your phone settings.</p><div className="theme-options">{([['dark', Moon], ['light', Sun], ['system', Monitor]] as const).map(([value, Icon]) => <button key={value} className={theme === value ? "selected" : ""} onClick={() => setTheme(value)}><Icon /><span>{value[0].toUpperCase() + value.slice(1)}</span>{theme === value && <Check />}</button>)}</div></section></div>}
+  </div>;
 }
